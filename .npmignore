@@ -3,3 +3,5 @@ gulpfile.js
 lib
 release-2
 test
+typings
+.settings

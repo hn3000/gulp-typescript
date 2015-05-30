@@ -1,27 +1,53 @@
-///<reference path='../definitions/ref.d.ts'/>
+///<reference path='../typings/tsd.d.ts'/>
 
-import gutil = require('gulp-util');
-import project = require('./project');
-import fs = require('fs');
-import path = require('path');
+import * as ts from 'typescript';
+import * as tsApi from './tsapi';
+import * as gutil from 'gulp-util';
+import { Project } from './project';
+import { File, FileCache } from './input';
+import * as utils from './utils';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export class Host implements ts.CompilerHost {
-	static libDefault: ts.SourceFile;
-	static initLibDefault() {
-		var content = fs.readFileSync(path.join(__dirname, '../typescript/lib.d.ts')).toString('utf8');
-		this.libDefault = ts.createSourceFile('__lib.d.ts', content, ts.ScriptTarget.ES3, "0"); // Will also work for ES5
+	static libDefault: utils.Map<ts.SourceFile> = {};
+	static getLibDefault(typescript: typeof ts, libFileName: string) {
+		let fileName: string;
+		for (const i in require.cache) {
+			if (!Object.prototype.hasOwnProperty.call(require.cache, i)) continue;
+
+			if (require.cache[i].exports === typescript) {
+				fileName = i;
+			}
+		}
+		if (fileName === undefined) {
+			return undefined; // Not found
+		}
+		fileName = path.join(path.dirname(fileName), libFileName);
+		if (this.libDefault[fileName]) {
+			return this.libDefault[fileName]; // Already loaded
+		}
+
+		const content = fs.readFileSync(fileName).toString('utf8');
+		return this.libDefault[fileName] = tsApi.createSourceFile(typescript, '__lib.d.ts', content, typescript.ScriptTarget.ES3); // Will also work for ES5 & 6
 	}
 
-	private currentDirectory: string;
-	private files: project.Map<project.FileData>;
-	private externalResolve: boolean;
-	output: project.Map<string>;
+	typescript: typeof ts;
 
-	constructor(currentDirectory: string, files: project.Map<project.FileData>, externalResolve: boolean) {
+	currentDirectory: string;
+	private externalResolve: boolean;
+	private libFileName: string;
+	input: FileCache;
+	output: utils.Map<string>;
+
+	constructor(typescript: typeof ts, currentDirectory: string, input: FileCache, externalResolve: boolean, libFileName: string) {
+		this.typescript = typescript;
+
 		this.currentDirectory = currentDirectory;
-		this.files = files;
+		this.input = input;
 
 		this.externalResolve = externalResolve;
+		this.libFileName = libFileName;
 
 		this.reset();
 	}
@@ -37,57 +63,42 @@ export class Host implements ts.CompilerHost {
 		return false;
 	}
 
-	getCurrentDirectory() {
+	getCurrentDirectory = () => {
 		return this.currentDirectory;
 	}
 	getCanonicalFileName(filename: string) {
-		return project.Project.normalizePath(filename);
+		return utils.normalizePath(filename);
 	}
 	getDefaultLibFilename() {
 		return '__lib.d.ts';
 	}
-
-	writeFile(filename: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void) {
-		this.output[filename] = data;
+	getDefaultLibFileName() {
+		return '__lib.d.ts';
 	}
 
-	getSourceFile(filename: string, languageVersion: ts.ScriptTarget, onError?: (message: string) => void): ts.SourceFile {
-		var text: string;
+	writeFile = (fileName: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void) => {
+		this.output[fileName] = data;
+	}
 
-		var normalizedFilename = project.Project.normalizePath(filename);
+	getSourceFile = (fileName: string, languageVersion: ts.ScriptTarget, onError?: (message: string) => void): ts.SourceFile => {
+		if (fileName === '__lib.d.ts') {
+			return Host.getLibDefault(this.typescript, this.libFileName);
+		}
 
-		if (this.files[normalizedFilename]) {
-			if (this.files[normalizedFilename] === project.Project.unresolvedFile) {
+		let sourceFile = this.input.getFile(fileName);
+		if (sourceFile) return sourceFile.ts;
+
+		if (this.externalResolve) {
+			let text: string;
+			try {
+				text = fs.readFileSync(fileName).toString('utf8');
+			} catch (ex) {
 				return undefined;
-			} else {
-				return this.files[normalizedFilename].ts;
 			}
-		} else if (normalizedFilename === '__lib.d.ts') {
-			return Host.libDefault;
-		} else {
-			if (this.externalResolve) {
-				try {
-					text = fs.readFileSync(filename).toString('utf8');
-				} catch (ex) {
-					return undefined;
-				}
-			}
+			this.input.addContent(fileName, text);
+
+			let sourceFile = this.input.getFile(fileName);
+			if (sourceFile) return sourceFile.ts;
 		}
-
-		if (typeof text !== 'string') return undefined;
-
-		var file = ts.createSourceFile(filename, text, languageVersion, "0");
-		this.files[normalizedFilename] = {
-			filename: normalizedFilename,
-			originalFilename: filename,
-			content: text,
-			ts: file
-		}
-		return file;
-	}
-
-	getFileData(filename: string) {
-		return this.files[project.Project.normalizePath(filename)];
 	}
 }
-Host.initLibDefault();

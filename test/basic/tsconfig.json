@@ -1,0 +1,10 @@
+{
+	"compilerOptions": {
+		"declaration": true,
+		"module": "amd"
+	},
+	"files": [
+		"test-3.ts",
+		"other-3.ts"
+	]
+}

@@ -1,18 +1,63 @@
-var ts = require('../typescript/ts');
-///<reference path='../definitions/ref.d.ts'/>
-var project = require('./project');
+///<reference path='../typings/tsd.d.ts'/>
+var tsApi = require('./tsapi');
+var utils = require('./utils');
 var fs = require('fs');
 var path = require('path');
 var Host = (function () {
-    function Host(currentDirectory, files, externalResolve) {
+    function Host(typescript, currentDirectory, input, externalResolve, libFileName) {
+        var _this = this;
+        this.getCurrentDirectory = function () {
+            return _this.currentDirectory;
+        };
+        this.writeFile = function (fileName, data, writeByteOrderMark, onError) {
+            _this.output[fileName] = data;
+        };
+        this.getSourceFile = function (fileName, languageVersion, onError) {
+            if (fileName === '__lib.d.ts') {
+                return Host.getLibDefault(_this.typescript, _this.libFileName);
+            }
+            var sourceFile = _this.input.getFile(fileName);
+            if (sourceFile)
+                return sourceFile.ts;
+            if (_this.externalResolve) {
+                var text;
+                try {
+                    text = fs.readFileSync(fileName).toString('utf8');
+                }
+                catch (ex) {
+                    return undefined;
+                }
+                _this.input.addContent(fileName, text);
+                var sourceFile_1 = _this.input.getFile(fileName);
+                if (sourceFile_1)
+                    return sourceFile_1.ts;
+            }
+        };
+        this.typescript = typescript;
         this.currentDirectory = currentDirectory;
-        this.files = files;
+        this.input = input;
         this.externalResolve = externalResolve;
+        this.libFileName = libFileName;
         this.reset();
     }
-    Host.initLibDefault = function () {
-        var content = fs.readFileSync(path.join(__dirname, '../typescript/lib.d.ts')).toString('utf8');
-        this.libDefault = ts.createSourceFile('__lib.d.ts', content, 0 /* ES3 */, "0"); // Will also work for ES5
+    Host.getLibDefault = function (typescript, libFileName) {
+        var fileName;
+        for (var i in require.cache) {
+            if (!Object.prototype.hasOwnProperty.call(require.cache, i))
+                continue;
+            if (require.cache[i].exports === typescript) {
+                fileName = i;
+            }
+        }
+        if (fileName === undefined) {
+            return undefined; // Not found
+        }
+        fileName = path.join(path.dirname(fileName), libFileName);
+        if (this.libDefault[fileName]) {
+            return this.libDefault[fileName]; // Already loaded
+        }
+        var content = fs.readFileSync(fileName).toString('utf8');
+        return this.libDefault[fileName] = tsApi.createSourceFile(typescript, '__lib.d.ts', content, 0 /* ES3 */); // Will also work for ES5 & 6
     };
     Host.prototype.reset = function () {
         this.output = {};
@@ -23,57 +68,16 @@ var Host = (function () {
     Host.prototype.useCaseSensitiveFileNames = function () {
         return false;
     };
-    Host.prototype.getCurrentDirectory = function () {
-        return this.currentDirectory;
-    };
     Host.prototype.getCanonicalFileName = function (filename) {
-        return project.Project.normalizePath(filename);
+        return utils.normalizePath(filename);
     };
     Host.prototype.getDefaultLibFilename = function () {
         return '__lib.d.ts';
     };
-    Host.prototype.writeFile = function (filename, data, writeByteOrderMark, onError) {
-        this.output[filename] = data;
+    Host.prototype.getDefaultLibFileName = function () {
+        return '__lib.d.ts';
     };
-    Host.prototype.getSourceFile = function (filename, languageVersion, onError) {
-        var text;
-        var normalizedFilename = project.Project.normalizePath(filename);
-        if (this.files[normalizedFilename]) {
-            if (this.files[normalizedFilename] === project.Project.unresolvedFile) {
-                return undefined;
-            }
-            else {
-                return this.files[normalizedFilename].ts;
-            }
-        }
-        else if (normalizedFilename === '__lib.d.ts') {
-            return Host.libDefault;
-        }
-        else {
-            if (this.externalResolve) {
-                try {
-                    text = fs.readFileSync(filename).toString('utf8');
-                }
-                catch (ex) {
-                    return undefined;
-                }
-            }
-        }
-        if (typeof text !== 'string')
-            return undefined;
-        var file = ts.createSourceFile(filename, text, languageVersion, "0");
-        this.files[normalizedFilename] = {
-            filename: normalizedFilename,
-            originalFilename: filename,
-            content: text,
-            ts: file
-        };
-        return file;
-    };
-    Host.prototype.getFileData = function (filename) {
-        return this.files[project.Project.normalizePath(filename)];
-    };
+    Host.libDefault = {};
     return Host;
 })();
 exports.Host = Host;
-Host.initLibDefault();

@@ -1,5 +1,6 @@
-var ts = require('../typescript/ts');
-var project = require('./project');
+var tsApi = require('./tsapi');
+var path = require('path');
+var utils = require('./utils');
 var Filter = (function () {
     function Filter(_project, filters) {
         var _this = this;
@@ -10,13 +11,13 @@ var Filter = (function () {
             this.referencedFrom = this.mapFilenamesToFiles(filters.referencedFrom);
             this.referencedFromAll = [];
             var addReference = function (file) {
-                if (_this.referencedFromAll.indexOf(file.filename) !== -1)
+                if (_this.referencedFromAll.indexOf(file.fileNameNormalized) !== -1)
                     return;
-                _this.referencedFromAll.push(file.filename);
+                _this.referencedFromAll.push(file.fileNameNormalized);
                 for (var i = 0; i < file.ts.referencedFiles.length; i++) {
-                    var ref = file.ts.referencedFiles[i].filename;
-                    ref = project.Project.normalizePath(ts.combinePaths(ts.getDirectoryPath(file.ts.filename), ref));
-                    var refFile = _this.project.currentFiles[ref];
+                    var ref = tsApi.getFileName(file.ts.referencedFiles[i]);
+                    ref = utils.normalizePath(path.join(path.dirname(tsApi.getFileName(file.ts)), ref));
+                    var refFile = _this.project.input.getFile(ref);
                     if (refFile)
                         addReference(refFile);
                 }
@@ -33,37 +34,43 @@ var Filter = (function () {
             if (file === undefined) {
                 console.log('gulp-typescript: Could not find file ' + filenames[i]);
             }
-            files.push(file);
+            else {
+                files.push(file);
+            }
         }
         return files;
     };
-    Filter.prototype.getFile = function (filename) {
-        var files = this.project.currentFiles;
-        for (var i in files) {
-            if (!files.hasOwnProperty(i))
+    Filter.prototype.getFile = function (searchFileName) {
+        var fileNames = this.project.input.getFileNames(true);
+        for (var _i = 0; _i < fileNames.length; _i++) {
+            var fileName = fileNames[_i];
+            var file = this.project.input.getFile(fileName);
+            if (!file || !file.gulp)
                 continue;
-            if (files[i].file.path.substring(files[i].file.base.length) == filename) {
-                return files[i];
+            var base = path.resolve(file.gulp.cwd, file.gulp.base) + '/';
+            if (file.gulp.path.substring(base.length) === searchFileName) {
+                return file;
             }
         }
         return undefined;
     };
-    Filter.prototype.match = function (filename) {
-        var originalFilename = project.Project.normalizePath(filename);
-        originalFilename = this.project.getOriginalName(originalFilename);
-        var file = this.project.currentFiles[originalFilename];
-        if (!file) {
-            console.log('gulp-typescript: Could not find file ' + filename + '. Make sure you don\'t rename a file before you pass it to ts.filter()');
+    Filter.prototype.match = function (fileName) {
+        var fileNameExtensionless = utils.splitExtension(fileName)[0];
+        var outputFile = this.project.output.files[fileNameExtensionless];
+        if (!outputFile) {
+            console.log('gulp-typescript: Could not find file ' + fileName + '. Make sure you don\'t rename a file before you pass it to ts.filter()');
+            return false;
         }
+        var file = outputFile.original;
         if (this.referencedFrom !== undefined) {
-            if (!this.matchReferencedFrom(filename, originalFilename, file)) {
+            if (!this.matchReferencedFrom(fileName, file)) {
                 return false;
             }
         }
         return true;
     };
-    Filter.prototype.matchReferencedFrom = function (filename, originalFilename, file) {
-        return this.referencedFromAll.indexOf(originalFilename) !== -1;
+    Filter.prototype.matchReferencedFrom = function (filename, file) {
+        return this.referencedFromAll.indexOf(file.fileNameNormalized) !== -1;
     };
     return Filter;
 })();

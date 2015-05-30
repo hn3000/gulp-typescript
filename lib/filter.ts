@@ -1,73 +1,86 @@
-import project = require('./project');
-import main = require('./main');
+import * as ts from 'typescript';
+import * as tsApi from './tsapi';
+import * as path from 'path';
+import { Project } from './project';
+import * as main from './main';
+import { File } from './input';
+import * as utils from './utils';
 
 export class Filter {
-	project: project.Project;
-	constructor(_project: project.Project, filters: main.FilterSettings) {
-		this.project = _project;
+	project: Project;
+	constructor(project: Project, filters: main.FilterSettings) {
+		this.project = project;
 
 		if (filters.referencedFrom !== undefined) {
 			this.referencedFrom = this.mapFilenamesToFiles(filters.referencedFrom);
 
 			this.referencedFromAll = [];
 
-			var addReference = (file: project.FileData) => {
-				if (this.referencedFromAll.indexOf(file.filename) !== -1) return;
+			const addReference = (file: File) => {
+				if (this.referencedFromAll.indexOf(file.fileNameNormalized) !== -1) return;
 
-				this.referencedFromAll.push(file.filename);
+				this.referencedFromAll.push(file.fileNameNormalized);
 
-				for (var i = 0; i < file.ts.referencedFiles.length; i++) {
-					var ref = file.ts.referencedFiles[i].filename;
-					ref = project.Project.normalizePath(ts.combinePaths(ts.getDirectoryPath(file.ts.filename), ref));
+				for (let i = 0; i < file.ts.referencedFiles.length; i++) {
+					let ref = tsApi.getFileName(file.ts.referencedFiles[i]);
+					ref = utils.normalizePath(path.join(path.dirname(tsApi.getFileName(file.ts)), ref));
 
-					var refFile = this.project.currentFiles[ref];
+					const refFile = this.project.input.getFile(ref);
 					if (refFile) addReference(refFile);
 				}
 			};
 
-			for (var i = 0; i < this.referencedFrom.length; i++) {
+			for (let i = 0; i < this.referencedFrom.length; i++) {
 				addReference(this.referencedFrom[i]);
 			}
 		}
 	}
 
 	private mapFilenamesToFiles(filenames: string[]) {
-		var files: project.FileData[] = [];
-		for (var i = 0; i < filenames.length; i++) {
-			var file = this.getFile(filenames[i]);
+		const files: File[] = [];
+		for (let i = 0; i < filenames.length; i++) {
+			const file = this.getFile(filenames[i]);
 			if (file === undefined) {
 				console.log('gulp-typescript: Could not find file ' + filenames[i]);
+			} else {
+				files.push(file);
 			}
-			files.push(file);
 		}
 		return files;
 	}
 
-	private getFile(filename: string) {
-		var files = this.project.currentFiles;
-		for (var i in files) {
-			if (!files.hasOwnProperty(i)) continue;
-			if (files[i].file.path.substring(files[i].file.base.length) == filename) {
-				return files[i];
+	private getFile(searchFileName: string): File {
+		const fileNames = this.project.input.getFileNames(true);
+		for (const fileName of fileNames) {
+			const file = this.project.input.getFile(fileName);
+			if (!file || !file.gulp) continue;
+			const base = path.resolve(
+				file.gulp.cwd,
+				file.gulp.base
+			) + '/';
+			if (file.gulp.path.substring(base.length) === searchFileName) {
+				return file;
 			}
 		}
 		return undefined;
 	}
 
-	private referencedFrom: project.FileData[] = undefined;
+	private referencedFrom: File[] = undefined;
 	private referencedFromAll: string[] = undefined;
 
-	match(filename: string) {
-		var originalFilename = project.Project.normalizePath(filename);
-		originalFilename = this.project.getOriginalName(originalFilename);
-		var file = this.project.currentFiles[originalFilename];
+	match(fileName: string) {
+		let fileNameExtensionless = utils.splitExtension(fileName)[0];
+		let outputFile = this.project.output.files[fileNameExtensionless];
 
-		if (!file) {
-			console.log('gulp-typescript: Could not find file ' + filename + '. Make sure you don\'t rename a file before you pass it to ts.filter()');
+		if (!outputFile) {
+			console.log('gulp-typescript: Could not find file ' + fileName + '. Make sure you don\'t rename a file before you pass it to ts.filter()');
+			return false;
 		}
 
+		let file = outputFile.original;
+
 		if (this.referencedFrom !== undefined) {
-			if (!this.matchReferencedFrom(filename, originalFilename, file)) {
+			if (!this.matchReferencedFrom(fileName, file)) {
 				return false;
 			}
 		}
@@ -75,7 +88,7 @@ export class Filter {
 		return true;
 	}
 
-	private matchReferencedFrom(filename: string, originalFilename: string, file: project.FileData) {
-		return this.referencedFromAll.indexOf(originalFilename) !== -1;
+	private matchReferencedFrom(filename: string, file: File) {
+		return this.referencedFromAll.indexOf(file.fileNameNormalized) !== -1;
 	}
 }
